@@ -6,16 +6,14 @@ import shlex
 import os
 import random
 from jaraco.stream import buffer
-
-
-def generate_nickname():
-    random_number = "".join([str(random.randint(0, 9)) for _ in range(7)])
-    return f"lucky_fox_{random_number}"
+from fastapi import WebSocket
+import asyncio
 
 
 class DCCReceive(irc.client.SimpleIRCClient):
-    def __init__(self):
+    def __init__(self, websocket: WebSocket):
         super().__init__()
+        self.websocket = websocket
         self.received_bytes = 0
         self.channel_joined = False
         self.channel = "#ebooks"
@@ -29,26 +27,33 @@ class DCCReceive(irc.client.SimpleIRCClient):
             r":\S+ (?:"  # Start with the server name followed by a space
             r"00[1-2]|"  # Numeric codes 001-002
             r"042|"  # Numeric code 042
-            r"375|"  # Numeric code 375
             r"NOTICE Auth :\*\*\* (?:Looking up your hostname|Could not resolve your hostname|Welcome to ☻irchighway☻)"
             r")"  # End of the pattern group
         )
 
+    async def send_message(self, message: str):
+        print(message)  # Print to the console
+        await self.websocket.send_text(message)  # Send over WebSocket
+
     def on_welcome(self, connection, event):
-        print(f"Connected to {connection.server} as {connection.nickname}")
+        asyncio.run(
+            self.send_message(
+                f"Connected to {connection.server} as {connection.nickname}"
+            )
+        )
         connection.join(self.channel)
 
     def on_join(self, connection, event):
         if event.target == self.channel and not self.channel_joined:
             self.channel_joined = True
-            print(f"Joined channel {self.channel}")
+            asyncio.run(self.send_message(f"Joined channel {self.channel}"))
 
     def on_ctcp(self, connection, event):
         payload = event.arguments[1]
         parts = shlex.split(payload)
 
         if len(parts) < 5:
-            print(f"Received invalid CTCP message: {payload}")
+            asyncio.run(self.send_message(f"Received invalid CTCP message: {payload}"))
             return
 
         command, filename, peer_address, peer_port, size = (
@@ -64,7 +69,11 @@ class DCCReceive(irc.client.SimpleIRCClient):
 
         self.filename = os.path.basename(filename)
         if os.path.exists(self.filename):
-            print(f"A file named {self.filename} already exists. Refusing to save it.")
+            asyncio.run(
+                self.send_message(
+                    f"A file named {self.filename} already exists. Refusing to save it."
+                )
+            )
             self.connection.quit()
             return
 
@@ -80,7 +89,11 @@ class DCCReceive(irc.client.SimpleIRCClient):
 
     def on_dcc_disconnect(self, connection, event):
         self.file.close()
-        print(f"Received file {self.filename} ({self.received_bytes} bytes).")
+        asyncio.run(
+            self.send_message(
+                f"Received file {self.filename} ({self.received_bytes} bytes)."
+            )
+        )
         self.connection.quit()
 
     def on_disconnect(self, connection, event):
@@ -89,18 +102,22 @@ class DCCReceive(irc.client.SimpleIRCClient):
     def on_all_raw_messages(self, connection, event):
         message = event.arguments[0]
         if self.pattern.match(message):
-            print(message)
+            # Split the message by ":" and take the part after the second ":"
+            parts = message.split(":", 2)
+            if len(parts) > 2:
+                output_message = parts[2].strip()
+                asyncio.run(self.send_message(output_message))
 
 
-def main():
-    client = DCCReceive()
+def start_dcc_receive_client(websocket: WebSocket):
+    client = DCCReceive(websocket)
     try:
-        client.connect("irc.irchighway.net", 6667, generate_nickname())
+        client.connect(
+            "irc.irchighway.net",
+            6667,
+            f"lucky_fox_{''.join([str(random.randint(0, 9)) for _ in range(7)])}",
+        )
     except irc.client.ServerConnectionError as e:
         print(e)
         sys.exit(1)
     client.start()
-
-
-if __name__ == "__main__":
-    main()

@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
+from dcc_receive import start_dcc_receive_client
 
 app = FastAPI()
 
@@ -27,18 +28,19 @@ async def websocket_endpoint(websocket: WebSocket):
     logging.info(f"Client connected: {websocket.client.host}")
 
     try:
-        # Notify the client that the program has started
-        start_message = "Program started"
-        logging.info("Sending start message to client")
-        await websocket.send_text(start_message)
-
         while True:
             data = await websocket.receive_text()
             logging.info(f"Received message from client: {data}")
-            # Echo the received message back to all connected clients
-            for client in connected_clients:
-                logging.info(f"Broadcasting message to client: {client.client.host}")
-                await client.send_text(data)
+
+            if data == "start":
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, start_dcc_receive_client, websocket)
     except WebSocketDisconnect:
         connected_clients.remove(websocket)
         logging.info(f"Client disconnected: {websocket.client.host}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

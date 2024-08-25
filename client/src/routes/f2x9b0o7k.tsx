@@ -1,108 +1,85 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import ky from 'ky';
 
-interface ApiResponse {
-    message: string;
-    data: any[]; // Consider using a more specific type if possible
-}
-
+// Custom hook for managing WebSocket connection and input state
 const useBooks = () => {
-    const [response, setResponse] = useState<ApiResponse>({ message: '', data: [] });
-    const [wsMessages, setWsMessages] = useState<string[]>([]);
-    const [input, setInput] = useState('');
+    const [input, setInput] = useState(''); // User input state
+    const [wsMessages, setWsMessages] = useState([]); // WebSocket messages state
+    const ws = useRef(null); // WebSocket instance
     const navigate = useNavigate();
 
-    const fetchData = async (command = 'init') => {
-        try {
-            const result = await ky.get(`http://localhost:8000/book/${command}`).json<ApiResponse>();
-            setResponse(result);
-        } catch (error) {
-            setResponse({ message: 'Failed to fetch data', data: [] });
-            console.error('Error fetching data:', error);
-        }
-    };
-
     useEffect(() => {
-        fetchData();
+        // Initialize WebSocket connection
+        ws.current = new WebSocket('ws://localhost:8000/ws');
 
-        // Set up WebSocket connection
-        const ws = new WebSocket('ws://localhost:8000/ws');
+        ws.current.onopen = () => console.log('WebSocket connection opened');
 
-        ws.onopen = () => {
-            console.log('WebSocket connection opened');
-        };
-
-        ws.onmessage = (event) => {
+        ws.current.onmessage = (event) => {
             console.log('WebSocket message received:', event.data);
             setWsMessages((prevMessages) => [...prevMessages, event.data]);
         };
 
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+        ws.current.onerror = (error) => console.error('WebSocket error:', error);
 
-        ws.onclose = () => {
-            console.log('WebSocket connection closed');
-        };
+        ws.current.onclose = () => console.log('WebSocket connection closed');
 
-        // Cleanup function to disconnect when component unmounts
+        // Cleanup WebSocket connection on component unmount
         return () => {
-            ws.close();
-            ky.get('http://localhost:8000/book/disconnect')
-                .then(() => console.log('Disconnected from IRC server'))
-                .catch(error => console.error('Error disconnecting:', error));
+            if (ws.current) {
+                ws.current.close();
+            }
         };
     }, []);
 
-    const handleCommand: React.FormEventHandler<HTMLFormElement> = (event) => {
+    const handleCommand = (event) => {
         event.preventDefault();
-        const command = input;
+        const command = input.trim();
+
+        if (command && ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(command);
+        }
+
         if (['back', 'exit'].includes(command.toLowerCase())) {
             navigate({ to: '/' });
-        } else {
-            fetchData(encodeURIComponent(command));
         }
-        setInput('');
+
+        setInput(''); // Clear input field after command execution
     };
 
-    return { response, wsMessages, input, setInput, handleCommand };
+    return { wsMessages, input, setInput, handleCommand };
 };
 
-export const Route = createFileRoute('/f2x9b0o7k')({ component: Books });
-
+// Component for handling book commands
 function Books() {
-    const { response, wsMessages, input, setInput, handleCommand } = useBooks();
+    const { wsMessages, input, setInput, handleCommand } = useBooks();
 
     return (
-        <>
-            <form onSubmit={handleCommand} className="flex flex-col items-center justify-center h-screen font-fira">
-                <div className="flex items-center space-x-2 max-w-md w-full p-4 border-t border-b border-gray-300">
-                    <span>(books)lukybooks@root:~$</span>
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        style={{ flexGrow: 1, background: 'transparent', border: 'none', outline: 'none' }}
-                        autoFocus
-                    />
-                </div>
-                {response.message && (
-                    <p style={{ marginTop: '0.5rem', color: response.message.startsWith('Failed') ? 'red' : 'gray', textAlign: 'justify' }}>
-                        {response.message}
+        <form onSubmit={handleCommand} className="flex flex-col items-center justify-center h-screen font-fira">
+            {/* Command input */}
+            <div className="flex items-center space-x-2 max-w-md w-full p-4 border-t border-b border-gray-300">
+                <span>(books)lukybooks@root:~$</span>
+                <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    className="flex-grow bg-transparent border-none outline-none"
+                    autoFocus
+                />
+            </div>
+
+            {/* WebSocket messages display */}
+            <div className="mt-4 max-h-[300px] ">
+                {wsMessages.map((msg, index) => (
+                    <p key={index} className="text-blue-700 text-justify truncate">
+                        {msg}
                     </p>
-                )}
-                <div style={{ marginTop: '1rem', maxHeight: '300px', overflowY: 'scroll' }}>
-                    <h3>WebSocket Messages:</h3>
-                    {wsMessages.map((msg, index) => (
-                        <p key={index} style={{ textAlign: 'justify', color: 'blue' }}>
-                            {msg}
-                        </p>
-                    ))}
-                </div>
-            </form>
-        </>
+                ))}
+            </div>
+        </form>
     );
 }
+
+// Route configuration
+export const Route = createFileRoute('/f2x9b0o7k')({ component: Books });
 
 export default Books;
