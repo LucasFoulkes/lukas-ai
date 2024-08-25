@@ -1,37 +1,42 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 
-// Passphrase to URL mappings
-const PASSPHRASE_MAPPINGS: { [key: string]: string } = {
+type PassphraseMappings = Record<string, string>;
+
+const PASSPHRASE_MAPPINGS: PassphraseMappings = {
     coyoteblue: '/f2x9b0o7k',
     cananvalley: 'https://cananvalley.systems/',
 };
 
 function Index() {
-    const [input, setInput] = useState('');
-    const inputRef = useRef<HTMLInputElement | null>(null);
+    const [input, setInput] = useState<string>('');
+    const [message, setMessage] = useState<string>('');
     const navigate = useNavigate();
 
-    // Automatically focus the input field on component mount
     useEffect(() => {
-        inputRef.current?.focus();
+        document.querySelector<HTMLInputElement>('input')?.focus();
     }, []);
 
-    // Handle form submission
-    const handleSubmit = (e: { preventDefault: () => void; }) => {
+    const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
         e.preventDefault();
-        const trimmedInput = input.trim().toLowerCase();
-
-        const destination = PASSPHRASE_MAPPINGS[trimmedInput];
+        const destination = PASSPHRASE_MAPPINGS[input.trim().toLowerCase()];
         if (destination) {
-            // Navigate based on the destination type
-            destination.startsWith('http') ? window.location.href = destination : navigate({ to: destination });
+            setMessage('Passphrase accepted. Redirecting...');
+            setTimeout(() => {
+                if (destination.startsWith('http')) {
+                    window.location.href = destination;
+                } else {
+                    navigate({ to: destination, replace: true });
+                }
+            }, 1000);
         } else {
-            console.log('Unrecognized passphrase:', trimmedInput);
+            setMessage('Passphrase rejected. Please try again.');
         }
-
-        // Reset input field after submission
         setInput('');
+    };
+
+    const handleInputChange = (e: ChangeEvent<HTMLInputElement>): void => {
+        setInput(e.target.value);
     };
 
     return (
@@ -39,14 +44,18 @@ function Index() {
             <div className="flex items-center space-x-2 max-w-md w-full p-4 border-t border-b border-gray-300">
                 <span>root@lukyfox:~$</span>
                 <input
-                    ref={inputRef}
                     type="text"
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Enter passphrase"
-                    className="flex-grow bg-transparent focus:outline-none"
+                    onChange={handleInputChange}
+                    className="flex-grow bg-transparent border-none focus:outline-none"
+                    autoFocus
                 />
             </div>
+            {message && (
+                <p className={`mt-2 text-justify ${message.startsWith('Passphrase accepted') ? 'text-green-500' : 'text-red-500'}`}>
+                    {message}
+                </p>
+            )}
         </form>
     );
 }
