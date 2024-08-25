@@ -47,7 +47,7 @@ function Index() {
           type="text"
           value={input}
           onChange={handleInputChange}
-          className="bg-transparent focus:outline-none flex-shrink w-full"
+          className="bg-transparent focus:outline-none flex-shrink w-full ml-2 "
           autoFocus
         />
       </div>

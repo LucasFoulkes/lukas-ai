@@ -1,11 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+
+// Type definitions
+interface WebSocketMessage {
+  data: string;
+}
 
 // Custom hook for managing WebSocket connection and input state
 const useBooks = () => {
-  const [input, setInput] = useState(""); // User input state
-  const [wsMessages, setWsMessages] = useState([]); // WebSocket messages state
-  const ws = useRef(null); // WebSocket instance
+  const [input, setInput] = useState<string>(""); // User input state
+  const [wsMessages, setWsMessages] = useState<string[]>([]); // WebSocket messages state
+  const ws = useRef<WebSocket | null>(null); // WebSocket instance
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -14,12 +19,13 @@ const useBooks = () => {
 
     ws.current.onopen = () => console.log("WebSocket connection opened");
 
-    ws.current.onmessage = (event) => {
+    ws.current.onmessage = (event: WebSocketMessage) => {
       console.log("WebSocket message received:", event.data);
       setWsMessages((prevMessages) => [...prevMessages, event.data]);
     };
 
-    ws.current.onerror = (error) => console.error("WebSocket error:", error);
+    ws.current.onerror = (error: Event) =>
+      console.error("WebSocket error:", error);
 
     ws.current.onclose = () => console.log("WebSocket connection closed");
 
@@ -31,7 +37,7 @@ const useBooks = () => {
     };
   }, []);
 
-  const handleCommand = (event) => {
+  const handleCommand = (event: FormEvent) => {
     event.preventDefault();
     const command = input.trim();
 
@@ -53,8 +59,14 @@ const useBooks = () => {
 function Books() {
   const { wsMessages, input, setInput, handleCommand } = useBooks();
 
-  const handleInputChange = (e) => setInput(e.target.value);
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) =>
+    setInput(e.target.value);
+
   const message = wsMessages.slice(-1)[0] || "";
+
+  // Determine the placeholder based on the latest message
+  const placeholder =
+    message === "Joined channel #ebooks" ? "search for book" : "wait a bit";
 
   return (
     <form
@@ -62,13 +74,14 @@ function Books() {
       className="h-screen w-screen flex flex-col justify-center items-center font-fira overflow-hidden"
     >
       <div className="flex items-center border-y border-gray-300 w-full max-w-screen-md overflow-hidden p-2">
-        <span>root@lukyfox:~$</span>
+        <span>(blue)root@lukyfox:~$</span>
         <input
           type="text"
           value={input}
           onChange={handleInputChange}
-          className="bg-transparent focus:outline-none flex-shrink w-full"
+          className="ml-2 bg-transparent focus:outline-none flex-shrink w-full"
           autoFocus
+          placeholder={placeholder} // Set the placeholder dynamically
         />
       </div>
       <p
