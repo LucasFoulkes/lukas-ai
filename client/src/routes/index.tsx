@@ -1,21 +1,36 @@
 import { useState, useEffect, useRef } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 
-export const Route = createFileRoute('/')({
-    component: Index,
-});
+// Passphrase to URL mappings
+const PASSPHRASE_MAPPINGS: { [key: string]: string } = {
+    coyoteblue: '/f2x9b0o7k',
+    cananvalley: 'https://cananvalley.systems/',
+};
 
 function Index() {
     const [input, setInput] = useState('');
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLInputElement | null>(null);
+    const navigate = useNavigate();
 
+    // Automatically focus the input field on component mount
     useEffect(() => {
         inputRef.current?.focus();
     }, []);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    // Handle form submission
+    const handleSubmit = (e: { preventDefault: () => void; }) => {
         e.preventDefault();
-        console.log('Input submitted:', input);
+        const trimmedInput = input.trim().toLowerCase();
+
+        const destination = PASSPHRASE_MAPPINGS[trimmedInput];
+        if (destination) {
+            // Navigate based on the destination type
+            destination.startsWith('http') ? window.location.href = destination : navigate({ to: destination });
+        } else {
+            console.log('Unrecognized passphrase:', trimmedInput);
+        }
+
+        // Reset input field after submission
         setInput('');
     };
 
@@ -36,4 +51,8 @@ function Index() {
     );
 }
 
-export default Route;
+export const Route = createFileRoute('/')({
+    component: Index
+});
+
+export default Index;
