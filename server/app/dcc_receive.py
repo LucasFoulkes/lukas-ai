@@ -19,24 +19,34 @@ class DCCReceive(irc.client.SimpleIRCClient):
         self.channel = "#ebooks"
         self.filename = None
         self.file = None
+        self.running = False
 
-        # Use a more lenient buffer to handle decoding issues gracefully
         irc.client.ServerConnection.buffer_class = buffer.LenientDecodingLineBuffer
 
         self.pattern = re.compile(
-            r":\S+ (?:"  # Start with the server name followed by a space
-            r"00[1-2]|"  # Numeric codes 001-002
-            r"042|"  # Numeric code 042
-            r"NOTICE Auth :\*\*\* (?:Looking up your hostname|Could not resolve your hostname|Welcome to ☻irchighway☻)"
-            r")"  # End of the pattern group
+            r":\S+ (?:"
+            r"00[1-2]|"
+            r"042|"
+            r"NOTICE Auth :\*\*\* (?:Looking up your hostname|Could not resolve your hostname|Welcome to ☻irchighway☻)|"
+            r"SearchBot"
+            r")"
         )
 
     async def send_message(self, message: str):
-        print(message)  # Print to the console
-        await self.websocket.send_text(message)  # Send over WebSocket
+        print(message)
+        await self.websocket.send_text(message)
+
+    def send_irc_message(self, message: str):
+        if self.channel_joined:
+            self.connection.privmsg(self.channel, message)
+            asyncio.create_task(self.send_message(f"Sent to IRC: {message}"))
+        else:
+            asyncio.create_task(
+                self.send_message("Not connected to channel yet. Message not sent.")
+            )
 
     def on_welcome(self, connection, event):
-        asyncio.run(
+        asyncio.create_task(
             self.send_message(
                 f"Connected to {connection.server} as {connection.nickname}"
             )
@@ -46,14 +56,16 @@ class DCCReceive(irc.client.SimpleIRCClient):
     def on_join(self, connection, event):
         if event.target == self.channel and not self.channel_joined:
             self.channel_joined = True
-            asyncio.run(self.send_message(f"Joined channel {self.channel}"))
+            asyncio.create_task(self.send_message(f"Joined channel {self.channel}"))
 
     def on_ctcp(self, connection, event):
         payload = event.arguments[1]
         parts = shlex.split(payload)
 
         if len(parts) < 5:
-            asyncio.run(self.send_message(f"Received invalid CTCP message: {payload}"))
+            asyncio.create_task(
+                self.send_message(f"Received invalid CTCP message: {payload}")
+            )
             return
 
         command, filename, peer_address, peer_port, size = (
@@ -69,7 +81,7 @@ class DCCReceive(irc.client.SimpleIRCClient):
 
         self.filename = os.path.basename(filename)
         if os.path.exists(self.filename):
-            asyncio.run(
+            asyncio.create_task(
                 self.send_message(
                     f"A file named {self.filename} already exists. Refusing to save it."
                 )
@@ -89,7 +101,7 @@ class DCCReceive(irc.client.SimpleIRCClient):
 
     def on_dcc_disconnect(self, connection, event):
         self.file.close()
-        asyncio.run(
+        asyncio.create_task(
             self.send_message(
                 f"Received file {self.filename} ({self.received_bytes} bytes)."
             )
@@ -97,19 +109,24 @@ class DCCReceive(irc.client.SimpleIRCClient):
         self.connection.quit()
 
     def on_disconnect(self, connection, event):
-        sys.exit(0)
+        self.running = False
 
     def on_all_raw_messages(self, connection, event):
         message = event.arguments[0]
         if self.pattern.match(message):
-            # Split the message by ":" and take the part after the second ":"
             parts = message.split(":", 2)
             if len(parts) > 2:
                 output_message = parts[2].strip()
-                asyncio.run(self.send_message(output_message))
+                asyncio.create_task(self.send_message(output_message))
+
+    async def start(self):
+        self.running = True
+        while self.running:
+            self.reactor.process_once(0.2)
+            await asyncio.sleep(0.1)
 
 
-def start_dcc_receive_client(websocket: WebSocket):
+async def start_dcc_receive_client(websocket: WebSocket):
     client = DCCReceive(websocket)
     try:
         client.connect(
@@ -117,7 +134,26 @@ def start_dcc_receive_client(websocket: WebSocket):
             6667,
             f"lucky_fox_{''.join([str(random.randint(0, 9)) for _ in range(7)])}",
         )
+
+        # Start the IRC client in a separate task
+        irc_task = asyncio.create_task(client.start())
+
+        # Handle WebSocket messages
+        while True:
+            message = await websocket.receive_text()
+            if message.startswith("/search "):
+                search_message = message[8:]  # Remove "/search " prefix
+                client.send_irc_message(search_message)
+            elif message == "/quit":
+                client.running = False
+                break
+
+        # Wait for the IRC client to finish
+        await irc_task
     except irc.client.ServerConnectionError as e:
         print(e)
-        sys.exit(1)
-    client.start()
+        await websocket.close()
+    except Exception as e:
+        print(f"Error: {e}")
+        client.connection.quit("WebSocket disconnected")
+        await websocket.close()

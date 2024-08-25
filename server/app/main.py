@@ -6,8 +6,6 @@ from dcc_receive import start_dcc_receive_client
 
 app = FastAPI()
 
-connected_clients = []
-
 # CORS middleware setup
 app.add_middleware(
     CORSMiddleware,
@@ -24,20 +22,19 @@ logging.basicConfig(level=logging.INFO)
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    connected_clients.append(websocket)
     logging.info(f"Client connected: {websocket.client.host}")
-
     try:
-        while True:
-            data = await websocket.receive_text()
-            logging.info(f"Received message from client: {data}")
-
-            if data == "start":
-                loop = asyncio.get_event_loop()
-                loop.run_in_executor(None, start_dcc_receive_client, websocket)
+        data = await websocket.receive_text()
+        logging.info(f"Received message from client: {data}")
+        if data == "/start":
+            await start_dcc_receive_client(websocket)
+        else:
+            await websocket.send_text("Use /start to begin the DCC client.")
     except WebSocketDisconnect:
-        connected_clients.remove(websocket)
         logging.info(f"Client disconnected: {websocket.client.host}")
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        await websocket.close()
 
 
 if __name__ == "__main__":
