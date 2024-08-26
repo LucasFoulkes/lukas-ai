@@ -1,5 +1,14 @@
-import { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  ChangeEvent,
+  FormEvent,
+  KeyboardEvent,
+} from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ScrollArea } from "@/components/ui/scroll-area"; // Import ScrollArea
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"; // Correct import for ShadCN components
 
 // Type definitions
 interface WebSocketMessage {
@@ -58,20 +67,60 @@ const useBooks = () => {
 // Component for handling book commands
 function Books() {
   const { wsMessages, input, setInput, handleCommand } = useBooks();
+  const [selectedIndex, setSelectedIndex] = useState<number>(0); // Track selected row index
+  const selectedRowRef = useRef<HTMLTableRowElement | null>(null); // Reference to the selected row
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) =>
     setInput(e.target.value);
 
+  // Parse the latest message as JSON if possible
   const message = wsMessages.slice(-1)[0] || "";
+  let parsedMessage: any = null;
+  try {
+    parsedMessage = JSON.parse(message);
+  } catch (error) {
+    parsedMessage = null; // If parsing fails, treat it as a normal message
+  }
 
-  // Determine the placeholder based on the latest message
   const placeholder =
     message === "Joined channel #ebooks" ? "search for book" : "wait a bit";
+
+  // Function to extract relevant part of each line
+  const extractInfo = (line: string) => {
+    const match = line.match(/-\s(.*?)\s::INFO::/);
+    return match ? match[1] : line; // Return the matched part or the original line if no match
+  };
+
+  // Handle key down events to navigate rows
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!parsedMessage || !parsedMessage.list) return;
+
+    if (event.key === "ArrowDown") {
+      setSelectedIndex((prevIndex) =>
+        Math.min(prevIndex + 1, parsedMessage.list.length - 10)
+      );
+    } else if (event.key === "ArrowUp") {
+      setSelectedIndex((prevIndex) => Math.max(prevIndex - 1, 0));
+    }
+  };
+
+  // Ensure the selected row is visible by scrolling to it
+  useEffect(() => {
+    if (selectedRowRef.current) {
+      selectedRowRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+  }, [selectedIndex]);
 
   return (
     <form
       onSubmit={handleCommand}
       className="h-screen w-screen flex flex-col justify-center items-center font-fira overflow-hidden"
+      onKeyDown={handleKeyDown}
+      tabIndex={0} // Make the form focusable so it can capture key events
     >
       <div className="flex items-center border-y border-gray-300 w-full max-w-screen-md overflow-hidden p-2">
         <span>(blue)root@lukyfox:~$</span>
@@ -81,14 +130,40 @@ function Books() {
           onChange={handleInputChange}
           className="ml-2 bg-transparent focus:outline-none flex-shrink w-full"
           autoFocus
-          placeholder={placeholder} // Set the placeholder dynamically
+          placeholder={placeholder}
         />
       </div>
-      <p
-        className={`text-left w-full max-w-screen-md overflow-hidden p-2 text-blue-700 text-sm`}
-      >
-        {message && <>{message}</>}
-      </p>
+
+      {/* If the message is a "list", render it as a scrollable table within a ScrollArea */}
+      {parsedMessage && parsedMessage.list ? (
+        <ScrollArea className="w-full max-w-screen-md p-2 h-[400px]">
+          <Table>
+            <TableBody>
+              {parsedMessage.list
+                .slice(9)
+                .map((line: string, index: number) => (
+                  <TableRow
+                    key={index}
+                    ref={index === selectedIndex ? selectedRowRef : null}
+                    className={
+                      index === selectedIndex ? "bg-gray-200" : "" // Highlight the selected row
+                    }
+                  >
+                    <TableCell className="whitespace-nowrap overflow-hidden overflow-ellipsis max-w-[300px]">
+                      {extractInfo(line)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      ) : (
+        <p
+          className={`text-left w-full max-w-screen-md overflow-hidden p-2 text-blue-700 text-sm`}
+        >
+          {message && <>{message}</>}
+        </p>
+      )}
     </form>
   );
 }

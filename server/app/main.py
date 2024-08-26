@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-from dcc_receive import start_dcc_receive_client
+from dcc_receive import start_dcc_receive_client  # Updated import path
 
 app = FastAPI()
 
@@ -24,12 +24,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logging.info(f"Client connected: {websocket.client.host}")
     try:
-        data = await websocket.receive_text()
-        logging.info(f"Received message from client: {data}")
-        if data == "/start":
-            await start_dcc_receive_client(websocket)
-        else:
-            await websocket.send_text("Use /start to begin the DCC client.")
+        while True:  # Keep the WebSocket connection open to handle multiple messages
+            data = await websocket.receive_text()
+            logging.info(f"Received message from client: {data}")
+            if data == "/start":
+                await start_dcc_receive_client(websocket)
+            else:
+                await websocket.send_text("Use /start to begin the DCC client.")
     except WebSocketDisconnect:
         logging.info(f"Client disconnected: {websocket.client.host}")
     except Exception as e:
