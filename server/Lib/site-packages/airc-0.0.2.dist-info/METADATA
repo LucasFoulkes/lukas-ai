@@ -1,0 +1,31 @@
+Metadata-Version: 2.1
+Name: airc
+Version: 0.0.2
+Summary: An asynchronous IRC implementation
+Home-page: https://github.com/CraftSpider/AIRC
+Author: CraftSpider
+Author-email: runetynan@gmail.com
+License: MIT
+Project-URL: Source, https://github.com/CraftSpider/AIRC
+Project-URL: Tracker, https://github.com/CraftSpider/AIRC/issues
+Keywords: irc asyncio
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Communications :: Chat :: Internet Relay Chat
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.5
+Requires-Python: >=3.5
+Description-Content-Type: text/x-rst
+Requires-Dist: asyncio
+Requires-Dist: websockets (>=6.0)
+
+
+An Asynchronous IRC Library
+===========================
+
+AIRC is a implementation of the IRC protocol using Python's asyncio library.
+It contains built in support for Twitch.tv IRC websockets as well.
+
+AIRC is still in Alpha, so features may be added/removed/altered at any time.
+

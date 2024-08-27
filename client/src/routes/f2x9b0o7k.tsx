@@ -1,169 +1,64 @@
-import {
-  useState,
-  useEffect,
-  useRef,
-  ChangeEvent,
-  FormEvent,
-  KeyboardEvent,
-} from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ScrollArea } from "@/components/ui/scroll-area"; // Import ScrollArea
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"; // Correct import for ShadCN components
+import { createFileRoute } from "@tanstack/react-router";
+import React, { useState, useEffect, useRef } from "react";
+import { io, Socket } from "socket.io-client";
 
-// Type definitions
-interface WebSocketMessage {
-  data: string;
-}
+function Books() {
+  const [input, setInput] = useState<string>("");
+  const [message, setMessage] = useState<string>("");
 
-// Custom hook for managing WebSocket connection and input state
-const useBooks = () => {
-  const [input, setInput] = useState<string>(""); // User input state
-  const [wsMessages, setWsMessages] = useState<string[]>([]); // WebSocket messages state
-  const ws = useRef<WebSocket | null>(null); // WebSocket instance
-  const navigate = useNavigate();
+  // Define the type for the socket reference
+  const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    // Initialize WebSocket connection
-    ws.current = new WebSocket("ws://localhost:8000/ws");
+    // Initialize the socket connection only once
+    socketRef.current = io("http://localhost:8080");
 
-    ws.current.onopen = () => console.log("WebSocket connection opened");
+    // Handle incoming messages from the server
+    socketRef.current.on("response", (data: { message: string }) => {
+      setMessage(data.message);
+    });
 
-    ws.current.onmessage = (event: WebSocketMessage) => {
-      console.log("WebSocket message received:", event.data);
-      setWsMessages((prevMessages) => [...prevMessages, event.data]);
-    };
-
-    ws.current.onerror = (error: Event) =>
-      console.error("WebSocket error:", error);
-
-    ws.current.onclose = () => console.log("WebSocket connection closed");
-
-    // Cleanup WebSocket connection on component unmount
+    // Clean up the connection when the component unmounts
     return () => {
-      if (ws.current) {
-        ws.current.close();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
       }
     };
   }, []);
 
-  const handleCommand = (event: FormEvent) => {
-    event.preventDefault();
-    const command = input.trim();
-
-    if (command && ws.current?.readyState === WebSocket.OPEN) {
-      ws.current.send(command);
-    }
-
-    if (["back", "exit"].includes(command.toLowerCase())) {
-      navigate({ to: "/" });
-    }
-
-    setInput(""); // Clear input field after command execution
-  };
-
-  return { wsMessages, input, setInput, handleCommand };
-};
-
-// Component for handling book commands
-function Books() {
-  const { wsMessages, input, setInput, handleCommand } = useBooks();
-  const [selectedIndex, setSelectedIndex] = useState<number>(0); // Track selected row index
-  const selectedRowRef = useRef<HTMLTableRowElement | null>(null); // Reference to the selected row
-
-  const handleInputChange = (e: ChangeEvent<HTMLInputElement>) =>
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
-
-  // Parse the latest message as JSON if possible
-  const message = wsMessages.slice(-1)[0] || "";
-  let parsedMessage: any = null;
-  try {
-    parsedMessage = JSON.parse(message);
-  } catch (error) {
-    parsedMessage = null; // If parsing fails, treat it as a normal message
-  }
-
-  const placeholder =
-    message === "Joined channel #ebooks" ? "search for book" : "wait a bit";
-
-  // Function to extract relevant part of each line
-  const extractInfo = (line: string) => {
-    const match = line.match(/-\s(.*?)\s::INFO::/);
-    return match ? match[1] : line; // Return the matched part or the original line if no match
   };
 
-  // Handle key down events to navigate rows
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!parsedMessage || !parsedMessage.list) return;
-
-    if (event.key === "ArrowDown") {
-      setSelectedIndex((prevIndex) =>
-        Math.min(prevIndex + 1, parsedMessage.list.length - 10)
-      );
-    } else if (event.key === "ArrowUp") {
-      setSelectedIndex((prevIndex) => Math.max(prevIndex - 1, 0));
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Send the input value to the server
+    if (socketRef.current) {
+      socketRef.current.emit("message", { data: input });
     }
+    setInput(""); // Clear the input field
   };
-
-  // Ensure the selected row is visible by scrolling to it
-  useEffect(() => {
-    if (selectedRowRef.current) {
-      selectedRowRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest",
-      });
-    }
-  }, [selectedIndex]);
 
   return (
     <form
-      onSubmit={handleCommand}
       className="h-screen w-screen flex flex-col justify-center items-center font-fira overflow-hidden"
-      onKeyDown={handleKeyDown}
-      tabIndex={0} // Make the form focusable so it can capture key events
+      onSubmit={handleSubmit}
     >
       <div className="flex items-center border-y border-gray-300 w-full max-w-screen-md overflow-hidden p-2">
-        <span>(blue)root@lukyfox:~$</span>
+        <span>(books)root@lukyfox:~$</span>
         <input
           type="text"
           value={input}
           onChange={handleInputChange}
-          className="ml-2 bg-transparent focus:outline-none flex-shrink w-full"
+          className="bg-transparent focus:outline-none flex-shrink w-full ml-2 "
           autoFocus
-          placeholder={placeholder}
         />
       </div>
-
-      {/* If the message is a "list", render it as a scrollable table within a ScrollArea */}
-      {parsedMessage && parsedMessage.list ? (
-        <ScrollArea className="w-full max-w-screen-md p-2 h-[400px]">
-          <Table>
-            <TableBody>
-              {parsedMessage.list
-                .slice(9)
-                .map((line: string, index: number) => (
-                  <TableRow
-                    key={index}
-                    ref={index === selectedIndex ? selectedRowRef : null}
-                    className={
-                      index === selectedIndex ? "bg-gray-200" : "" // Highlight the selected row
-                    }
-                  >
-                    <TableCell className="whitespace-nowrap overflow-hidden overflow-ellipsis max-w-[300px]">
-                      {extractInfo(line)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
-        </ScrollArea>
-      ) : (
-        <p
-          className={`text-left w-full max-w-screen-md overflow-hidden p-2 text-blue-700 text-sm`}
-        >
-          {message && <>{message}</>}
-        </p>
-      )}
+      <p
+        className={`text-left w-full max-w-screen-md overflow-hidden p-2 text-sm text-blue-600`}
+      >
+        {message && <>{message}</>}
+      </p>
     </form>
   );
 }
