@@ -1,64 +1,26 @@
-from gevent import pywsgi
-from geventwebsocket.handler import WebSocketHandler
-from flask import Flask
-import threading
+import uvicorn
+import ssl
 import logging
-from shared_sio import sio  # Import the shared sio instance
-from irc_bot import Bot  # Import the Bot class
-import socketio
+from app import app  # Import the FastAPI app from app.py
 
-# Create a Flask app
-app = Flask(__name__)
-
-# Attach Socket.IO server to the Flask app
-app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
-
-# Dictionary to hold the IRC bot instances keyed by sid
-bots = {}
-
-
-# Define a connect handler
-@sio.event
-def connect(sid, environ):
-    nickname = f"bot_{sid[:8]}"  # Create a unique nickname using the sid
-    bot = Bot(
-        channel="#ebooks",
-        nickname=nickname,
-        server="irc.irchighway.net",
-        port=6667,
-        sio=sio,
-        sid=sid,
-    )
-    bots[sid] = bot
-    threading.Thread(target=bot.start).start()  # Start the bot in a separate thread
-    print(f"Client connected: {sid} with IRC bot nickname: {nickname}")
-
-
-@sio.event
-def message(sid, data):
-    if sid in bots:
-        bot = bots[sid]
-        # Extract the message text from the data dictionary or convert to string if needed
-        if isinstance(data, dict) and "data" in data:
-            message_text = data["data"]
-        else:
-            message_text = str(data)
-
-        bot.connection.privmsg(
-            bot.channel, message_text
-        )  # Send message to the IRC channel
-
-
-# Define a disconnect handler
-@sio.event
-def disconnect(sid):
-    if sid in bots:
-        bot = bots[sid]
-        bot.die("WebSocket client disconnected.")
-        del bots[sid]
-    print(f"Client disconnected: {sid}")
-
+# Set up logging
+logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    server = pywsgi.WSGIServer(("0.0.0.0", 8080), app, handler_class=WebSocketHandler)
-    server.serve_forever()
+    # Configure SSL (only for development, don't use CERT_NONE in production)
+    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context.load_cert_chain('fullchain.pem', 'privkey.pem')
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE  # Only for development!
+
+    logger.info("Starting server")
+    uvicorn.run(
+        "app:app",  # Reference the app in app.py
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        ssl_keyfile="privkey.pem",
+        ssl_certfile="fullchain.pem",
+        ssl_keyfile_password=None,  # Add this if your key is password-protected
+        log_level="info"
+    )
