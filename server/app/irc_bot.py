@@ -1,13 +1,17 @@
+# File: irc_bot.py
+
 import os
 import shlex
 import struct
 import irc.client
-from nick_generator import nick_generator
-import queue
-import re
 from jaraco.stream import buffer
 import logging
 import time
+import queue
+from dcc_handler import DCCHandler
+from message_handler import MessageHandler
+from config import Config
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,172 +24,41 @@ irc.client.ServerConnection.buffer_class = buffer.LenientDecodingLineBuffer
 class DCCReceive(irc.client.SimpleIRCClient):
     def __init__(self, message_queue):
         super().__init__()
-        self.received_bytes = 0
-        self.nickname = nick_generator()
-        self.message_queue = message_queue
+        self.config = Config()
+        self.dcc_handler = DCCHandler(message_queue)
+        self.message_handler = MessageHandler(self.config.nickname, message_queue)
         self.is_running = False
-        self.pattern = re.compile(rf".*\b{self.nickname}\b.*", re.IGNORECASE)
-        self.dcc = None
-        self.file = None
-        self.filename = None
-        self.expected_file_size = 0
-        self.last_progress_report = 0
-        logger.info(f"Initialized DCCReceive with nickname: {self.nickname}")
-
-    def send_to_queue(self, message):
-        self.message_queue.put(message)
-        logger.info(f"Queued message: {message}")
-
-    def on_nicknameinuse(self, connection, event):
-        self.nickname = nick_generator()
-        connection.nick(self.nickname)
-        self.pattern = re.compile(rf".*\b{self.nickname}\b.*", re.IGNORECASE)
-        logger.info(f"Nickname in use, changed to: {self.nickname}")
 
     def on_welcome(self, connection, event):
         logger.info("Received welcome message from server")
-        connection.join("#ebooks")
-        logger.info("Joined #ebooks channel")
+        connection.join(self.config.channel)
+        logger.info(f"Joined {self.config.channel} channel")
+
+    def on_nicknameinuse(self, connection, event):
+        self.config.nickname = self.config.nick_generator()
+        connection.nick(self.config.nickname)
+        self.message_handler.update_nickname(self.config.nickname)
+        logger.info(f"Nickname in use, changed to: {self.config.nickname}")
 
     def on_ctcp(self, connection, event):
-        logger.debug(f"Received CTCP event: {event}")
-        try:
-            ctcp_type = event.arguments[0]
-            if ctcp_type != "DCC":
-                logger.info(f"Ignoring non-DCC CTCP: {ctcp_type}")
-                return
-
-            payload = event.arguments[1]
-            parts = shlex.split(payload)
-
-            if len(parts) < 5:
-                logger.warning(f"Received DCC command with insufficient parts: {parts}")
-                return
-
-            command, filename, peer_address, peer_port, size = parts[:5]
-
-            if command != "SEND":
-                logger.info(f"Ignoring non-SEND DCC command: {command}")
-                return
-
-            self.prepare_for_new_download()
-
-            self.filename = os.path.basename(filename)
-            self.file = open(self.filename, "wb")
-            self.expected_file_size = int(size)
-            peer_address = irc.client.ip_numstr_to_quad(peer_address)
-            peer_port = int(peer_port)
-            logger.info(
-                f"Initiating DCC connection to {peer_address}:{peer_port} for file {self.filename}"
-            )
-
-            self.dcc = self.reactor.dcc("raw")
-            self.dcc.connect(peer_address, peer_port)
-
-            # Report initial progress
-            self.report_progress()
-        except Exception as e:
-            logger.error(f"Error in on_ctcp: {e}", exc_info=True)
-            self.prepare_for_new_download()
+        self.dcc_handler.handle_ctcp(self, connection, event)
 
     def on_dccmsg(self, connection, event):
-        try:
-            data = event.arguments[0]
-            if self.file:
-                self.file.write(data)
-                self.received_bytes += len(data)
-                self.dcc.send_bytes(struct.pack("!I", self.received_bytes))
-                logger.debug(
-                    f"Received {len(data)} bytes, total: {self.received_bytes}"
-                )
-
-                self.report_progress()
-
-                if self.received_bytes >= self.expected_file_size:
-                    self.finalize_download()
-            else:
-                logger.error("Received DCC message but file is not open.")
-        except Exception as e:
-            logger.error(f"Error in on_dccmsg: {e}", exc_info=True)
-            self.prepare_for_new_download()
-
-    def report_progress(self):
-        if self.expected_file_size > 0:
-            progress = (self.received_bytes / self.expected_file_size) * 100
-            current_progress = int(progress)
-
-            # Report progress at every 5% increment
-            if (
-                current_progress % 5 == 0
-                and current_progress != self.last_progress_report
-            ):
-                self.last_progress_report = current_progress
-                progress_message = (
-                    f"Download progress for {self.filename}: {current_progress}%"
-                )
-                self.send_to_queue(progress_message)
-
-    def on_dcc_disconnect(self, connection, event):
-        self.finalize_download()
-
-    def finalize_download(self):
-        if self.file:
-            self.file.close()
-            completion_message = (
-                f"Download completed: {self.filename} ({self.received_bytes} bytes)"
-            )
-            self.send_to_queue(completion_message)
-        self.prepare_for_new_download()
-
-    def prepare_for_new_download(self):
-        if self.file:
-            self.file.close()
-        self.file = None
-        self.filename = None
-        self.received_bytes = 0
-        self.expected_file_size = 0
-        self.last_progress_report = 0
-        if self.dcc:
-            try:
-                # Attempt to close the socket directly
-                if hasattr(self.dcc, "socket") and self.dcc.socket:
-                    self.dcc.socket.close()
-                # Remove the DCC connection from the reactor's list if it exists
-                if hasattr(self.reactor, "connections"):
-                    self.reactor.connections = [
-                        conn
-                        for conn in self.reactor.connections
-                        if conn is not self.dcc
-                    ]
-            except Exception as e:
-                logger.error(f"Error during DCC cleanup: {e}", exc_info=True)
-            finally:
-                self.dcc = None
-        logger.info("Prepared for new download")
+        self.dcc_handler.handle_dccmsg(self, connection, event)
 
     def on_disconnect(self, connection, event):
         logger.warning("Disconnected from server")
         self.is_running = False
-        self.prepare_for_new_download()
+        self.dcc_handler.prepare_for_new_download()
 
     def on_all_raw_messages(self, connection, event):
-        for arg in event.arguments:
-            try:
-                decoded_arg = (
-                    arg.decode("utf-8", errors="replace")
-                    if isinstance(arg, bytes)
-                    else arg
-                )
-                if self.pattern.match(decoded_arg):
-                    self.send_to_queue(decoded_arg)
-            except Exception as e:
-                logger.error(f"Error processing message: {e}", exc_info=True)
+        self.message_handler.process_raw_messages(connection, event)
 
     def run(self):
         while True:  # Outer loop for reconnection
             try:
                 logger.info("Connecting to the server")
-                self.connect("irc.irchighway.net", 6667, self.nickname)
+                self.connect(self.config.server, self.config.port, self.config.nickname)
             except irc.client.ServerConnectionError as e:
                 logger.error(f"Error connecting to server: {e}", exc_info=True)
                 logger.info("Waiting 60 seconds before retrying...")
@@ -198,15 +71,28 @@ class DCCReceive(irc.client.SimpleIRCClient):
                     self.reactor.process_once(0.2)
                 except Exception as e:
                     logger.error(f"Error in main loop: {e}", exc_info=True)
-                    self.prepare_for_new_download()  # Reset state on any error
+                    self.dcc_handler.prepare_for_new_download()  # Reset state on any error
 
             logger.warning("Disconnected. Attempting to reconnect...")
             time.sleep(60)  # Wait before reconnecting
 
     def send_message(self, message):
         if self.connection.is_connected():
-            self.connection.privmsg("#ebooks", message)
+            self.connection.privmsg(self.config.channel, message)
             logger.info(f"Sent message: {message}")
             return True
         logger.warning("Failed to send message: Not connected")
         return False
+
+
+if __name__ == "__main__":
+    message_queue = queue.Queue()
+    dcc_receiver = DCCReceive(message_queue)
+    try:
+        dcc_receiver.run()
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, shutting down.")
+    except Exception as e:
+        logger.critical(f"Unhandled exception: {e}", exc_info=True)
+    finally:
+        logger.info("Exiting program.")
