@@ -5,6 +5,7 @@ import shlex
 import irc.client
 import zipfile
 import re
+import download_handler
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,8 @@ class DCCHandler:
             )
             self.send_to_queue(completion_message)
             logger.info(completion_message)
-            self.handle_file()
+            download_handler.handle_file(self.filename, self.message_queue)
+
         self.prepare_for_new_download()
 
     def prepare_for_new_download(self):
