@@ -3,6 +3,8 @@ import struct
 import logging
 import shlex
 import irc.client
+import zipfile
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +86,49 @@ class DCCHandler:
             progress = (self.received_bytes / self.expected_file_size) * 100
             current_progress = int(progress)
 
-            # Report progress at every 5% increment
-            if (
-                current_progress % 5 == 0
-                and current_progress != self.last_progress_report
-            ):
+            # Report progress at every 1% increment
+            if current_progress != self.last_progress_report:
                 self.last_progress_report = current_progress
+
+                # Create a visual progress bar
+                bar_length = 30
+                filled_length = int(bar_length * current_progress / 100)
+                bar = "█" * filled_length + "-" * (bar_length - filled_length)
+
+                # Format file sizes
+                received_mb = self.received_bytes / (1024 * 1024)
+                total_mb = self.expected_file_size / (1024 * 1024)
+
                 progress_message = (
-                    f"Download progress for {self.filename}: {current_progress}%"
+                    # f"Download progress for {self.filename}:\n"
+                    f"[{bar}] {current_progress}%\n"
+                    f"{received_mb:.2f} MB / {total_mb:.2f} MB"
                 )
                 self.send_to_queue(progress_message)
+
+    def handle_file(self):
+        # Define the pattern to match the zip file
+        pattern = r"SearchBot_results_for_.*\.zip"
+        # Check if the filename matches the pattern
+        if re.match(pattern, self.filename):
+            # Unzip the file
+            with zipfile.ZipFile(self.filename, "r") as zip_ref:
+                zip_ref.extractall(path=".")
+
+            # Delete the zip file
+            os.remove(self.filename)
+            logger.info(f"Unzipped and deleted the file: {self.filename}")
+
+            # Find the .txt file in the extracted contents
+            extracted_files = zip_ref.namelist()
+            txt_files = [f for f in extracted_files if f.endswith(".txt")]
+
+            if txt_files:
+                txt_file_path = txt_files[0]  # Assuming there's only one .txt file
+                with open(txt_file_path, "r") as txt_file:
+                    txt_contents = txt_file.read()
+                    self.send_to_queue(txt_contents)
+                    logger.info(f"Sent contents of {txt_file_path} to queue")
 
     def finalize_download(self):
         if self.file:
@@ -102,6 +137,8 @@ class DCCHandler:
                 f"Download completed: {self.filename} ({self.received_bytes} bytes)"
             )
             self.send_to_queue(completion_message)
+            logger.info(completion_message)
+            self.handle_file()
         self.prepare_for_new_download()
 
     def prepare_for_new_download(self):
