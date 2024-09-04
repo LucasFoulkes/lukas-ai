@@ -1,26 +1,53 @@
+import socketio
 import uvicorn
-import ssl
-import logging
-from app import app  # Import the FastAPI app from app.py
+from queue import Queue
+from threading import Thread
+from runner import run_irc_bot
+from irc_bot import logger
 
-# Set up logging
-logger = logging.getLogger(__name__)
+# Initialize Socket.IO
+sio = socketio.AsyncServer(cors_allowed_origins="*", async_mode="asgi")
+app = socketio.ASGIApp(sio)
+
+# Message queue
+message_queue = Queue()
+
+# Start the IRC bot in a separate thread
+bot_thread = Thread(
+    target=run_irc_bot,
+    args=("#ebooks", "lukyfox", "irc.irchighway.net", 6667, sio, message_queue),
+)
+bot_thread.daemon = True
+bot_thread.start()
+
+
+@sio.event
+async def connect(sid, environ):
+    logger.info(f"Client connected: {sid}")
+    await sio.emit("response", {"message": "Connected"}, room=sid)
+
+
+@sio.event
+def disconnect(sid):
+    logger.info(f"Client disconnected: {sid}")
+
+
+@sio.event
+async def message(sid, data):
+    logger.info(f"Message received from {sid}: {data}")
+    message = data.get("data")
+    message_queue.put(message)
+
 
 if __name__ == "__main__":
-    # Configure SSL (only for development, don't use CERT_NONE in production)
-    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ssl_context.load_cert_chain('fullchain.pem', 'privkey.pem')
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE  # Only for development!
-
     logger.info("Starting server")
     uvicorn.run(
-        "app:app",  # Reference the app in app.py
+        "main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
         ssl_keyfile="privkey.pem",
         ssl_certfile="fullchain.pem",
-        ssl_keyfile_password=None,  # Add this if your key is password-protected
-        log_level="info"
+        ssl_keyfile_password=None,
+        log_level="info",
     )

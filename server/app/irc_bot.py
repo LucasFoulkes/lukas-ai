@@ -1,98 +1,67 @@
-# File: irc_bot.py
-
-import os
-import shlex
-import struct
-import irc.client
-from jaraco.stream import buffer
+import irc.bot
+import asyncio
 import logging
-import time
-import queue
-from dcc_handler import DCCHandler
-from message_handler import MessageHandler
-from config import Config
-
+from jaraco.stream import buffer
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Use a more lenient decoding method
-irc.client.ServerConnection.buffer_class = buffer.LenientDecodingLineBuffer
+
+class LenientDecodingLineBuffer(buffer.DecodingLineBuffer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.errors = "replace"
+
+    def decode(self, buf):
+        try:
+            return buf.decode("utf-8", errors=self.errors)
+        except UnicodeDecodeError:
+            return buf.decode("latin-1", errors=self.errors)
 
 
-class DCCReceive(irc.client.SimpleIRCClient):
-    def __init__(self, message_queue):
-        super().__init__()
-        self.config = Config()
-        self.dcc_handler = DCCHandler(message_queue)
-        self.message_handler = MessageHandler(self.config.nickname, message_queue)
-        self.is_running = False
+class IRCBot(irc.bot.SingleServerIRCBot):
+    def __init__(self, channel, nickname, server, port, sio, queue):
+        irc.bot.SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
+        self.channel = channel
+        self.sio = sio
+        self.queue = queue
+        self.connection.buffer_class = LenientDecodingLineBuffer
+        self.received_bytes = 0
 
     def on_welcome(self, connection, event):
-        logger.info("Received welcome message from server")
-        connection.join(self.config.channel)
-        logger.info(f"Joined {self.config.channel} channel")
+        connection.join(self.channel)
+        logger.info(f"Joined channel: {self.channel}")
 
-    def on_nicknameinuse(self, connection, event):
-        self.config.nickname = self.config.nick_generator()
-        connection.nick(self.config.nickname)
-        self.message_handler.update_nickname(self.config.nickname)
-        logger.info(f"Nickname in use, changed to: {self.config.nickname}")
+    def on_pubmsg(self, connection, event):
+        message = event.arguments[0]
+        asyncio.run(self.sio.emit("response", {"message": message}))
+        logger.info(f"Emitted message: {message}")
 
-    def on_ctcp(self, connection, event):
-        self.dcc_handler.handle_ctcp(self, connection, event)
-
-    def on_dccmsg(self, connection, event):
-        self.dcc_handler.handle_dccmsg(self, connection, event)
-
-    def on_disconnect(self, connection, event):
-        logger.warning("Disconnected from server")
-        self.is_running = False
-        self.dcc_handler.prepare_for_new_download()
-
-    def on_all_raw_messages(self, connection, event):
-        self.message_handler.process_raw_messages(connection, event)
-
-    def run(self):
-        while True:  # Outer loop for reconnection
-            try:
-                logger.info("Connecting to the server")
-                self.connect(self.config.server, self.config.port, self.config.nickname)
-            except irc.client.ServerConnectionError as e:
-                logger.error(f"Error connecting to server: {e}", exc_info=True)
-                logger.info("Waiting 60 seconds before retrying...")
-                time.sleep(60)
-                continue
-
-            self.is_running = True
-            while self.is_running:
-                try:
-                    self.reactor.process_once(0.2)
-                except Exception as e:
-                    logger.error(f"Error in main loop: {e}", exc_info=True)
-                    self.dcc_handler.prepare_for_new_download()  # Reset state on any error
-
-            logger.warning("Disconnected. Attempting to reconnect...")
-            time.sleep(60)  # Wait before reconnecting
+    def on_prvmsg(self, connection, event):
+        message = event.arguments[0]
+        asyncio.run(self.sio.emit("response", {"message": message}))
+        logger.info(f"Emitted message: {message}")
 
     def send_message(self, message):
         if self.connection.is_connected():
-            self.connection.privmsg(self.config.channel, message)
+            self.connection.privmsg(self.channel, message)
             logger.info(f"Sent message: {message}")
             return True
         logger.warning("Failed to send message: Not connected")
         return False
 
+    # def on_ctcp(self, connection, event):
+    #     from dcc_handler import handle_ctcp
 
-if __name__ == "__main__":
-    message_queue = queue.Queue()
-    dcc_receiver = DCCReceive(message_queue)
-    try:
-        dcc_receiver.run()
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down.")
-    except Exception as e:
-        logger.critical(f"Unhandled exception: {e}", exc_info=True)
-    finally:
-        logger.info("Exiting program.")
+    #     handle_ctcp(self, connection, event)
+
+    # def on_dccmsg(self, connection, event):
+    #     from dcc_handler import on_dccmsg
+
+    #     on_dccmsg(self, connection, event)
+
+    # def on_dcc_disconnect(self, connection, event):
+    #     from dcc_handler import on_dcc_disconnect
+
+    #     on_dcc_disconnect(self, connection, event)
